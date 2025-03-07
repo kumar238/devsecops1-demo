@@ -1,0 +1,81 @@
+pipeline {
+    agent any
+
+    environment {
+        SCANNER_HOME = tool 'Sonar'
+        DockerHubUser = 'shubhankar24' // Ensure this is a string
+    }
+
+    stages {
+        stage('Workspace Cleanup') {
+            steps {
+                cleanWs()
+            }
+        }
+        
+        stage('Git: Checkout') {
+            steps {
+                git branch: 'main', url: 'https://github.com/Shubhankar-24x/devsecops-demo.git'
+            }
+        }
+        
+        stage('OWASP: Dependency Check') {
+            steps {
+                dependencyCheck additionalArguments: '--scan ./', odcInstallation: 'OWASP'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+
+        stage('Trivy: File Scan') {
+            steps {
+                sh 'trivy fs .'
+            }
+        }
+
+        stage('Sonarqube: Code Analysis') {
+            steps {
+                withSonarQubeEnv("Sonar") {
+                    sh "$SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=tic-tac-toe -Dsonar.projectKey=tic-tac-toe -X"
+                }
+            }
+        }
+
+        stage('Sonarqube: Quality Gate') {
+            steps {
+                timeout(time: 1, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: false
+                }
+            }
+        }
+
+        stage('Docker: Build & Tag Image') {
+            steps {
+                sh 'docker build -t ${DockerHubUser}/tic-tac-toe:latest .'
+            }
+        }
+
+        stage('Trivy: Image Scan') {
+            steps {
+                sh 'trivy image ${DockerHubUser}/tic-tac-toe:latest > trivy-results.txt'
+            }
+        }
+
+        stage('Docker: Image Push') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'DockerHubUser', passwordVariable: 'dockerHubPass', usernameVariable: 'dockerHubUser')]) {
+                    echo "Logging into DockerHub"
+                    
+                    // Log in to DockerHub using the provided credentials
+                    sh "docker login -u ${dockerHubUser} -p ${dockerHubPass}"
+                    echo "Login to DockerHub successful"
+
+                    echo "Pushing image to Docker Hub"
+
+                    // Push the Docker image to DockerHub using the provided variables
+                    sh "docker push ${DockerHubUser}/tic-tac-toe:latest"
+                    echo "Image pushed successfully to Docker Hub"
+                }
+            }
+        }
+    }
+}
